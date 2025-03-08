@@ -11,30 +11,40 @@ module ActiveRecord
     end
 
     def establish_connection(spec = nil)
-      spec     ||= ConnectionHandling::DEFAULT_ENV.call.to_sym
-      resolver =   ConnectionAdapters::ConnectionSpecification::Resolver.new configurations
-      spec     =   resolver.spec(spec)
+      spec ||= ConnectionHandling::DEFAULT_ENV.call.to_sym
+      if ActiveRecord::VERSION::MAJOR >= 6 && ActiveRecord::VERSION::MINOR >= 1
+        spec = ActiveRecord::Base.configurations.resolve(spec)
+      else
+        resolver = ConnectionAdapters::ConnectionSpecification::Resolver.new configurations
+        spec = resolver.spec(spec)
+      end
 
-      if spec.config[:ssh_tunnel_hostname]
-        ssh_options = Hash[spec.config.keys.select { |key|
+      config = if ActiveRecord::VERSION::MAJOR >= 6 && ActiveRecord::VERSION::MINOR >= 1
+        spec.configuration_hash.deep_dup
+      else
+        spec.config
+      end
+
+      if config[:ssh_tunnel_hostname]
+        ssh_options = Hash[config.keys.select { |key|
           key.to_s.start_with? "ssh_tunnel_"
         }.map{ |key|
-          [key.to_s.gsub("ssh_tunnel_", "").to_sym, spec.config[key]]
+          [key.to_s.gsub("ssh_tunnel_", "").to_sym, config[key]]
         }]
 
         port = Net::SSH::Gateway.new(
           ssh_options.delete(:hostname),
           ssh_options.delete(:user),
           ssh_options,
-        ).open(spec.config[:host], spec.config[:port])
+        ).open(config[:host], config[:port])
 
-        spec.config[:host] = "127.0.0.1"
-        spec.config[:port] = port
+        config[:host] = "127.0.0.1"
+        config[:port] = port
       end
 
       remove_connection
       if ActiveRecord::VERSION::MAJOR >= 5
-        connection_handler.establish_connection spec
+        connection_handler.establish_connection config
       else
         connection_handler.establish_connection self, spec
       end
